@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chat2md — turn a public ChatGPT, Grok or Gemini *share link* into a Markdown file.
+"""chat2md — turn a public ChatGPT, Grok or Gemini *share link* (or a saved Claude share JSON) into a Markdown file.
 
 Usage:
     python3 chat2md.py <share-url> [more urls...] [-o OUTDIR]
@@ -8,6 +8,8 @@ Supported:
     https://chatgpt.com/share/<id>    (also chat.openai.com/share/<id>)
     https://grok.com/share/<id>       (also .../share/<slug>_<id>)
     https://gemini.google.com/share/<id>  (also share.gemini.google/<id>, g.co/gemini/share/<id>)
+    path/to/claude-share.json         (saved from claude.ai/api/chat_snapshots/<id>; run with a
+                                       claude.ai/share link to get the exact URL)
 
 No login, no browser, standard library only.
 """
@@ -198,6 +200,50 @@ def gemini(url):
     return title, msgs
 
 
+# ---------------------------------------------------------------- Claude
+CLAUDE_API = "https://claude.ai/api/chat_snapshots/{}?rendering_mode=messages&render_all_tools=true"
+
+
+def claude_text(m):
+    parts = []
+    for c in m.get("content") or []:
+        t = c.get("type")
+        if t == "text" and c.get("text"):
+            parts.append(c["text"])
+        elif t == "tool_use":
+            inp = c.get("input") or {}
+            if inp.get("content"):  # artifacts
+                lang = inp.get("language") or ""
+                head = f"**{inp.get('title') or 'Artifact'}**\n\n"
+                parts.append(f"{head}```{lang}\n{inp['content']}\n```")
+    if not parts and m.get("text"):
+        parts.append(m["text"])
+    for a in m.get("attachments") or []:
+        parts.append(f"*[attachment: {a.get('file_name', 'file')}]*")
+    return "\n\n".join(parts)
+
+
+def claude_json(path):
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    msgs = []
+    for m in data.get("chat_messages") or []:
+        text = claude_text(m).strip()
+        if text:
+            msgs.append(("User" if m.get("sender") == "human" else "Claude", text))
+    return data.get("snapshot_name") or data.get("name") or "Claude conversation", msgs
+
+
+def claude_url(url):
+    m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", url)
+    api = CLAUDE_API.format(m.group(1) if m else "<id>")
+    sys.exit(
+        "Claude share links are protected by a Cloudflare bot check, so they can't be fetched directly.\n"
+        "Instead:\n"
+        f"  1. Open this URL in your normal browser:\n     {api}\n"
+        "  2. Save the page (Cmd/Ctrl+S) as a .json file.\n"
+        "  3. Run:  python3 chat2md.py path/to/file.json\n")
+
+
 # ---------------------------------------------------------------- main
 def to_md(title, msgs, url):
     out = [f"# {title}", "", f"> Source: {url}", ""]
@@ -217,7 +263,11 @@ def main():
     a = ap.parse_args()
     Path(a.outdir).mkdir(parents=True, exist_ok=True)
     for url in a.urls:
-        if "grok.com" in url:
+        if Path(url).is_file():
+            title, msgs = claude_json(url)
+        elif "claude.ai" in url:
+            claude_url(url)
+        elif "grok.com" in url:
             title, msgs = grok(url)
         elif "gemini.google" in url or "g.co/gemini" in url:
             title, msgs = gemini(url)

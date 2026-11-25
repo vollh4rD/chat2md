@@ -1,6 +1,6 @@
 # chat2md
 
-Turn a public **ChatGPT**, **Grok** or **Gemini** share link into a clean Markdown file.
+Turn a public **ChatGPT**, **Grok**, **Gemini** or **Claude** share link into a clean Markdown file.
 
 No login, no browser automation, no dependencies: just Python 3 and the share link.
 
@@ -12,7 +12,7 @@ python3 chat2md.py "https://grok.com/share/..." "https://chatgpt.com/share/..." 
 
 - Put each URL in quotes.
 - `-o` sets the output folder (default: the current directory).
-- Each chat is saved as `<Chat-Title>.md`, with `## User` / `## ChatGPT` / `## Grok` / `## Gemini` sections in order.
+- Each chat is saved as `<Chat-Title>.md`, with `## User` / `## ChatGPT` / `## Grok` / `## Gemini` / `## Claude` sections in order.
 
 ## Supported links
 
@@ -24,6 +24,23 @@ python3 chat2md.py "https://grok.com/share/..." "https://chatgpt.com/share/..." 
 
 To get a link, open the chat, click **Share**, and copy the link.
 
+## Claude (one extra step)
+
+Claude's share data is behind a Cloudflare bot check, so the script can't download it itself. Your browser can:
+
+1. Run the script with the Claude link to get the exact data URL:
+   ```bash
+   python3 chat2md.py "https://claude.ai/share/<id>"
+   ```
+   It prints a link like `https://claude.ai/api/chat_snapshots/<id>?rendering_mode=messages&render_all_tools=true`.
+2. Open that link in your normal browser and save the page (Cmd/Ctrl+S) as a `.json` file.
+3. Convert the saved file:
+   ```bash
+   python3 chat2md.py path/to/file.json -o chats/
+   ```
+
+Artifacts are included as code blocks; attachments appear as `*[attachment: name]*`.
+
 ## How it works
 
 - **Grok:** reads the conversation as JSON from Grok's public share endpoint (`/rest/app-chat/share_links/<id>`).
@@ -32,7 +49,6 @@ To get a link, open the chat, click **Share**, and copy the link.
 
 ## Limitations
 
-- Claude share links aren't supported: their data is behind Cloudflare bot protection.
 
 - Only public share links work; private chats need to be shared first.
 - Images in ChatGPT chats appear as `*[image]*` placeholders.
