@@ -26,18 +26,17 @@ To get a link, open the chat, click **Share**, and copy the link.
 
 ## Claude (one extra step)
 
-Claude's share data is behind a Cloudflare bot check, so the script can't download it itself. Your browser can:
+Claude's share data is behind a Cloudflare bot check, so the script can't download it itself. Your browser loads it instead:
 
-1. Run the script with the Claude link to get the exact data URL:
-   ```bash
-   python3 chat2md.py "https://claude.ai/share/<id>"
-   ```
-   It prints a link like `https://claude.ai/api/chat_snapshots/<id>?rendering_mode=messages&render_all_tools=true`.
-2. Open that link in your normal browser and save the page (Cmd/Ctrl+S) as a `.json` file.
-3. Convert the saved file:
-   ```bash
-   python3 chat2md.py path/to/file.json -o chats/
-   ```
+```bash
+python3 chat2md.py "https://claude.ai/share/<id>" -o chats/
+```
+
+1. The script opens the chat's data page in your browser.
+2. Press Cmd/Ctrl+A, then Cmd/Ctrl+C to copy it.
+3. Press Enter in the terminal. The script reads the clipboard and writes the `.md` file. No JSON file is saved.
+
+You can also pass a saved snapshot `.json` file. It's **deleted after a successful conversion**; add `--keep-json` to keep it.
 
 Artifacts are included as code blocks; attachments appear as `*[attachment: name]*`.
 

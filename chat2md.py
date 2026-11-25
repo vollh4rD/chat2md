@@ -8,8 +8,8 @@ Supported:
     https://chatgpt.com/share/<id>    (also chat.openai.com/share/<id>)
     https://grok.com/share/<id>       (also .../share/<slug>_<id>)
     https://gemini.google.com/share/<id>  (also share.gemini.google/<id>, g.co/gemini/share/<id>)
-    path/to/claude-share.json         (saved from claude.ai/api/chat_snapshots/<id>; run with a
-                                       claude.ai/share link to get the exact URL)
+    https://claude.ai/share/<id>      (opens your browser; you copy the data, script reads the clipboard)
+    path/to/claude-share.json         (a saved snapshot; deleted after converting unless --keep-json)
 
 No login, no browser, standard library only.
 """
@@ -223,8 +223,7 @@ def claude_text(m):
     return "\n\n".join(parts)
 
 
-def claude_json(path):
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+def claude_data(data):
     msgs = []
     for m in data.get("chat_messages") or []:
         text = claude_text(m).strip()
@@ -233,16 +232,43 @@ def claude_json(path):
     return data.get("snapshot_name") or data.get("name") or "Claude conversation", msgs
 
 
-def claude_url(url):
-    m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", url)
-    api = CLAUDE_API.format(m.group(1) if m else "<id>")
-    sys.exit(
-        "Claude share links are protected by a Cloudflare bot check, so they can't be fetched directly.\n"
-        "Instead:\n"
-        f"  1. Open this URL in your normal browser:\n     {api}\n"
-        "  2. Save the page (Cmd/Ctrl+S) as a .json file.\n"
-        "  3. Run:  python3 chat2md.py path/to/file.json\n")
+def claude_json(path):
+    return claude_data(json.loads(Path(path).read_text(encoding="utf-8")))
 
+
+def read_clipboard():
+    import subprocess
+    for cmd in (["pbpaste"], ["wl-paste"], ["xclip", "-o", "-selection", "clipboard"],
+                ["powershell", "-command", "Get-Clipboard -Raw"]):
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    return ""
+
+
+def claude_url(url):
+    """Claude's share API is behind a Cloudflare bot check, so let the user's own
+    browser load it, then pick the JSON up from the clipboard (no file needed)."""
+    import webbrowser
+    m = re.search(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", url)
+    if not m:
+        sys.exit(f"Could not find a Claude share ID in {url}")
+    api = CLAUDE_API.format(m.group(1))
+    print(f"Opening in your browser:\n  {api}")
+    webbrowser.open(api)
+    while True:
+        try:
+            input("When the page shows the data, press Cmd/Ctrl+A then Cmd/Ctrl+C, and hit Enter here... ")
+        except (EOFError, KeyboardInterrupt):
+            sys.exit("\nCancelled.")
+        try:
+            data = json.loads(read_clipboard())
+            if isinstance(data, dict) and "chat_messages" in data:
+                return claude_data(data)
+        except ValueError:
+            pass
+        print("Clipboard doesn't contain the Claude chat data yet. Try again (Ctrl+C to quit).")
 
 # ---------------------------------------------------------------- main
 def to_md(title, msgs, url):
@@ -260,13 +286,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("urls", nargs="+")
     ap.add_argument("-o", "--outdir", default=".")
+    ap.add_argument("--keep-json", action="store_true",
+                    help="don't delete a Claude .json file after converting it")
     a = ap.parse_args()
     Path(a.outdir).mkdir(parents=True, exist_ok=True)
     for url in a.urls:
         if Path(url).is_file():
             title, msgs = claude_json(url)
         elif "claude.ai" in url:
-            claude_url(url)
+            title, msgs = claude_url(url)
         elif "grok.com" in url:
             title, msgs = grok(url)
         elif "gemini.google" in url or "g.co/gemini" in url:
@@ -282,6 +310,9 @@ def main():
         path = Path(a.outdir) / f"{slug(title)}.md"
         path.write_text(to_md(title, msgs, url), encoding="utf-8")
         print(f"Wrote {path} ({len(msgs)} messages)")
+        if Path(url).is_file() and url.lower().endswith(".json") and not a.keep_json:
+            Path(url).unlink()
+            print(f"Deleted {url}")
 
 
 if __name__ == "__main__":
