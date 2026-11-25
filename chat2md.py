@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chat2md — turn a public ChatGPT or Grok *share link* into a Markdown file.
+"""chat2md — turn a public ChatGPT, Grok or Gemini *share link* into a Markdown file.
 
 Usage:
     python3 chat2md.py <share-url> [more urls...] [-o OUTDIR]
@@ -7,10 +7,11 @@ Usage:
 Supported:
     https://chatgpt.com/share/<id>    (also chat.openai.com/share/<id>)
     https://grok.com/share/<id>       (also .../share/<slug>_<id>)
+    https://gemini.google.com/share/<id>  (also share.gemini.google/<id>, g.co/gemini/share/<id>)
 
 No login, no browser, standard library only.
 """
-import argparse, json, re, sys, urllib.request, urllib.error
+import argparse, json, re, sys, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -141,6 +142,62 @@ def grok(url):
     return conv.get("title") or data.get("title") or "Grok conversation", msgs
 
 
+# ---------------------------------------------------------------- Gemini
+def gemini(url):
+    """Gemini share pages load the chat via Google's (undocumented) batchexecute RPC."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:  # follows share.gemini.google redirects
+        final, html = r.geturl(), r.read().decode("utf-8", "replace")
+    m = re.search(r"/share/([0-9a-zA-Z]+)", final)
+    if not m:
+        sys.exit(f"Could not find a Gemini share ID in {final}")
+    sid = m.group(1)
+    bl = re.search(r'"cfb2h":"([^"]+)"', html)
+    fsid = re.search(r'"FdrFJe":"([^"]+)"', html)
+    params = {"rpcids": "ujx1Bf", "source-path": f"/share/{sid}", "hl": "en", "rt": "c"}
+    if bl:
+        params["bl"] = bl.group(1)
+    if fsid:
+        params["f.sid"] = fsid.group(1)
+    freq = json.dumps([[["ujx1Bf", json.dumps([None, sid, [1]]), None, "generic"]]])
+    req = urllib.request.Request(
+        "https://gemini.google.com/_/BardChatUi/data/batchexecute?" + urllib.parse.urlencode(params),
+        data=urllib.parse.urlencode({"f.req": freq}).encode(),
+        headers={"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        body = r.read().decode("utf-8", "replace")
+    data = None
+    for line in body.split("\n"):
+        if line.startswith('[["wrb.fr"'):
+            payload = json.loads(line)[0][2]
+            if payload:
+                data = json.loads(payload)
+            break
+    if not data or not data[0]:
+        sys.exit("Gemini returned no conversation (link may be invalid or deleted).")
+
+    def dig(o, *path):
+        for k in path:
+            try:
+                o = o[k]
+            except (IndexError, KeyError, TypeError):
+                return None
+        return o
+
+    root = data[0]
+    title = dig(root, 2, 1) or "Gemini conversation"
+    turns = sorted(root[1] or [], key=lambda t: (dig(t, 4, 0) or 0, dig(t, 4, 1) or 0))
+    msgs = []
+    for t in turns:
+        q = dig(t, 2, 0, 0)
+        a = dig(t, 3, 0, 0, 1, 0)
+        if q and q.strip():
+            msgs.append(("User", q.strip()))
+        if a and a.strip():
+            msgs.append(("Gemini", a.strip()))
+    return title, msgs
+
+
 # ---------------------------------------------------------------- main
 def to_md(title, msgs, url):
     out = [f"# {title}", "", f"> Source: {url}", ""]
@@ -162,6 +219,8 @@ def main():
     for url in a.urls:
         if "grok.com" in url:
             title, msgs = grok(url)
+        elif "gemini.google" in url or "g.co/gemini" in url:
+            title, msgs = gemini(url)
         elif "chatgpt.com" in url or "openai.com" in url:
             title, msgs = chatgpt(url)
         else:
